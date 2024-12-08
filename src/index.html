@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Game: Moving Cubes with Constellation Background</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            z-index: 1;
+        }
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 36px;
+            cursor: pointer;
+            z-index: 2;
+            overflow: hidden;
+        }
+        .particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="start-screen">
+        <div>START GAME</div>
+    </div>
+
+    <div id="ui" style="display:none;">
+        <div>Score: <span id="score">0</span></div>
+        <div>Time: <span id="timer">30</span>s</div>
+        <div>Level: <span id="level">1</span></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@latest/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        // Particle effect on the start screen
+        $(document).ready(function() {
+            const particles = [];
+            const numParticles = 100;
+            const startScreen = $('#start-screen');
+
+            // Create particles
+            for (let i = 0; i < numParticles; i++) {
+                const particle = $('<div class="particle"></div>');
+                startScreen.append(particle);
+                particles.push(particle);
+            }
+
+            // Animate particles
+            function moveParticles() {
+                particles.forEach(particle => {
+                    const xPos = Math.random() * window.innerWidth;
+                    const yPos = Math.random() * window.innerHeight;
+                    const size = Math.random() * 5 + 5;
+                    const opacity = Math.random() * 0.5 + 0.5;
+                    const duration = Math.random() * 5 + 2;
+
+                    particle.css({
+                        left: xPos,
+                        top: yPos,
+                        width: size,
+                        height: size,
+                        opacity: opacity
+                    }).animate({
+                        left: Math.random() * window.innerWidth,
+                        top: Math.random() * window.innerHeight
+                    }, duration * 1000, 'linear', function() {
+                        moveParticles(); // Repeat animation
+                    });
+                });
+            }
+
+            // Start moving particles
+            moveParticles();
+        });
+
+        // Scene, Camera, Renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // OrbitControls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        camera.position.z = 8;
+
+        // Particle System (Constellation-like Stars)
+        const starsCount = 5000;
+        const starGeometry = new THREE.BufferGeometry();
+        const starPositions = new Float32Array(starsCount * 3);
+
+        // Create star positions
+        for (let i = 0; i < starsCount; i++) {
+            starPositions[i * 3] = Math.random() * 200 - 100;  // X
+            starPositions[i * 3 + 1] = Math.random() * 200 - 100;  // Y
+            starPositions[i * 3 + 2] = Math.random() * 200 - 100;  // Z
+        }
+
+        starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+
+        const starMaterial = new THREE.PointsMaterial({
+            color: 0xFFFFFF,
+            size: 0.5,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+        // Resize Handler
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+
+        // Variables for Game
+        const cubes = [];
+        const enemies = [];
+        let bonusCube = null;
+        let score = 0;
+        let level = 1;
+        let timeLeft = 30; // Game timer in seconds
+        let cubesCount = 5; // Number of white cubes
+        let enemyCount = 2; // Number of enemies
+        let bonusActive = false;
+
+        // Movement Directions
+        const directions = []; // Stores the movement direction of each object
+
+        // UI Elements
+        const scoreElement = document.getElementById('score');
+        const timerElement = document.getElementById('timer');
+        const levelElement = document.getElementById('level');
+        const startScreen = document.getElementById('start-screen');
+        const uiElement = document.getElementById('ui');
+
+        // Raycaster and Mouse Vector
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Helper to Create a Cube
+        function createCube(color) {
+            const geometry = new THREE.BoxGeometry();
+            const material = new THREE.MeshLambertMaterial({ color });
+            const cube = new THREE.Mesh(geometry, material);
+
+            // Randomize position
+            cube.position.set(
+                (Math.random() - 0.5) * 10,
+                (Math.random() - 0.5) * 10,
+                (Math.random() - 0.5) * 10
+            );
+
+            scene.add(cube);
+            return cube;
+        }
+
+        // Initialize White Cubes, Enemies, and Bonus
+        function initializeObjects() {
+            // Clear existing objects
+            cubes.forEach(cube => scene.remove(cube));
+            enemies.forEach(enemy => scene.remove(enemy));
+            if (bonusCube) scene.remove(bonusCube);
+            cubes.length = 0;
+            enemies.length = 0;
+            directions.length = [];
+            bonusCube = null;
+
+            // Add white cubes (now challenge items)
+            for (let i = 0; i < cubesCount; i++) {
+                const cube = createCube(0xffffff); // White cubes
+                cubes.push(cube);
+                directions.push({
+                    axis: Math.random() > 0.5 ? 'x' : 'y',
+                    speed: 0.05 + Math.random() * 0.1
+                });
+            }
+
+            // Add black cubes (now enemies)
+            for (let i = 0; i < enemyCount; i++) {
+                const enemy = createCube(0x87CEEB); // Black cubes
+                enemies.push(enemy);
+                directions.push({
+                    axis: Math.random() > 0.5 ? 'x' : 'y',
+                    speed: 0.05 + Math.random() * 0.1
+                });
+            }
+
+            // Spawn bonus cube
+            if (Math.random() < 0.5) spawnBonusCube();
+        }
+
+        // Spawn Bonus Cube
+        function spawnBonusCube() {
+            bonusCube = createCube(0xffff00); // Golden cube
+            bonusActive = true;
+
+            // Despawn bonus cube after 5 seconds
+            setTimeout(() => {
+                if (bonusCube) {
+                    scene.remove(bonusCube);
+                    bonusCube = null;
+                    bonusActive = false;
+                }
+            }, 5000);
+        }
+
+        // Handle Cube and Enemy Clicks
+        window.addEventListener('click', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([...cubes, ...enemies, bonusCube].filter(Boolean));
+
+            if (intersects.length > 0) {
+                const clickedObject = intersects[0].object;
+
+                if (cubes.includes(clickedObject)) {
+                    // White cube clicked
+                    score += 10;
+                    scoreElement.textContent = score;
+
+                    // Remove clicked cube
+                    scene.remove(clickedObject);
+                    cubes.splice(cubes.indexOf(clickedObject), 1);
+
+                    // Check if all cubes are collected
+                    if (cubes.length === 0) nextLevel();
+                } else if (enemies.includes(clickedObject)) {
+                    // Black cube (enemy) clicked
+                    alert('Game Over! You clicked an enemy!');
+                    resetGame();
+                } else if (clickedObject === bonusCube) {
+                    // Bonus cube clicked
+                    score += 50;
+                    scoreElement.textContent = score;
+
+                    // Remove bonus cube
+                    scene.remove(bonusCube);
+                    bonusCube = null;
+                    bonusActive = false;
+                }
+            }
+        });
+
+        // Move Objects
+        function moveObjects() {
+            if (level >= 3) {
+                [...cubes, ...enemies].forEach((object, index) => {
+                    const { axis, speed } = directions[index];
+                    object.position[axis] += speed;
+
+                    // Reverse direction if hitting bounds
+                    if (object.position[axis] > 5 || object.position[axis] < -5) {
+                        directions[index].speed *= -1;
+                    }
+                });
+            }
+        }
+
+        // Move Stars to Simulate a Moving Constellation
+        function moveStars() {
+            const positions = starGeometry.attributes.position.array;
+
+    // Adjust the movement of stars
+    for (let i = 0; i < starsCount; i++) {
+        // Slowly move stars in random directions across X, Y, and Z axes
+        positions[i * 3] += 0.01 * (Math.random() - 0.5);  // X movement
+        positions[i * 3 + 1] += 0.01 * (Math.random() - 0.5);  // Y movement
+        positions[i * 3 + 2] += 0.01 * (Math.random() - 0.5);  // Z movement
+
+        // Reset position when stars go out of bounds (make them wrap around)
+        if (positions[i * 3] > 100) positions[i * 3] = -100;
+        if (positions[i * 3] < -100) positions[i * 3] = 100;
+        if (positions[i * 3 + 1] > 100) positions[i * 3 + 1] = -100;
+        if (positions[i * 3 + 1] < -100) positions[i * 3 + 1] = 100;
+        if (positions[i * 3 + 2] > 100) positions[i * 3 + 2] = -100;
+        if (positions[i * 3 + 2] < -100) positions[i * 3 + 2] = 100;
+    }
+
+    // Mark the geometry as needing an update to apply changes
+    starGeometry.attributes.position.needsUpdate = true;
+}
+
+        // Timer Countdown
+        const timerInterval = setInterval(() => {
+            if (timeLeft > 0) {
+                timeLeft -= 1;
+                timerElement.textContent = timeLeft;
+            } else {
+                clearInterval(timerInterval);
+                alert('Time Up! Your final score is: ' + score);
+                resetGame();
+            }
+        }, 1000);
+
+        // Progress to Next Level
+        function nextLevel() {
+            level++;
+            levelElement.textContent = level;
+
+            if (level === 10) {
+                alert('Congratulations! You reached Level 10 and won the game!');
+                resetGame();
+                return;
+            }
+
+            cubesCount += 3; // Add more white cubes
+            enemyCount += 1; // Add more enemies
+            timeLeft += 10; // Extra time for the new level
+            initializeObjects();
+        }
+
+        // Reset Game
+        function resetGame() {
+            score = 0;
+            level = 1;
+            timeLeft = 30;
+            cubesCount = 5;
+            enemyCount = 2;
+
+            scoreElement.textContent = score;
+            levelElement.textContent = level;
+            timerElement.textContent = timeLeft;
+
+            initializeObjects();
+        }
+
+        // Lights
+        const light = new THREE.PointLight(0xffffff, 1, 100);
+        light.position.set(10, 10, 10);
+        scene.add(light);
+
+        const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
+        scene.add(ambientLight);
+
+        // Animation Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Rotate the camera around the scene
+            controls.update(); // for orbit controls
+
+            // Move objects
+            moveObjects();
+
+            // Move stars (constellations)
+            moveStars();
+
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+
+        // Start the Game when clicked on the Start Screen
+        startScreen.addEventListener('click', () => {
+            // Hide start screen and show game UI
+            startScreen.style.display = 'none';
+            uiElement.style.display = 'block';
+
+            // Initialize and start the game
+            initializeObjects();
+            animate();
+        });
+    </script>
+</body>
+</html>
